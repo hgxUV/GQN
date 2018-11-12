@@ -10,10 +10,10 @@ def conv_block(prev, size, k: tuple, s: tuple):
 
 root_path = 'data'
 data_reader = DataReader(dataset='jaco', context_size=5, root=root_path)
-data = data_reader.read(batch_size=12)
+data = data_reader.read(batch_size=1)
+
+test = conv_block(data[1], 256, (2, 2), (2, 2))
 
 with tf.train.SingularMonitoredSession() as sess:
-    d = sess.run(data)
-    for img in d.target:
-        plt.imshow(img)
-        plt.show()
+    d = sess.run(test)
+
