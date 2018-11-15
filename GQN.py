@@ -8,7 +8,7 @@ def conv_block(prev, size, k: tuple, s: tuple):
     return tf.layers.conv2d(prev, size, k, s, size_policy, activation=tf.nn.relu)
 
 
-def generative_pipeline_tower(x, v):
+def representation_pipeline_tower(x, v):
     input_img = x
     input_v = tf.broadcast_to(v, (1, 16, 16, 7))
 
