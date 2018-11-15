@@ -31,6 +31,10 @@ def generative_pipeline_tower(x, v):
     return conv_block(test8, 256, (1, 1), (1, 1))
 
 
+def add_to_r(r, new_part):
+    return tf.math.add(r, new_part)
+
+
 root_path = 'data'
 data_reader = DataReader(dataset='jaco', context_size=5, root=root_path)
 data = data_reader.read(batch_size=1)
