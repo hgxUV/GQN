@@ -8,11 +8,6 @@ def conv_block(prev, size, k: tuple, s: tuple):
     return tf.layers.conv2d(prev, size, k, s, size_policy, activation=tf.nn.relu)
 
 
-root_path = 'data'
-data_reader = DataReader(dataset='jaco', context_size=5, root=root_path)
-data = data_reader.read(batch_size=1)
-
-
 def generative_pipeline_tower(x, v):
     input_img = x
     input_v = tf.broadcast_to(v, (1, 16, 16, 7))
@@ -35,6 +30,10 @@ def generative_pipeline_tower(x, v):
     # last conv
     return conv_block(test8, 256, (1, 1), (1, 1))
 
+
+root_path = 'data'
+data_reader = DataReader(dataset='jaco', context_size=5, root=root_path)
+data = data_reader.read(batch_size=1)
 
 xd = generative_pipeline_tower(data[1], data[0][1])
 
