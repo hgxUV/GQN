@@ -39,7 +39,7 @@ root_path = 'data'
 data_reader = DataReader(dataset='jaco', context_size=5, root=root_path)
 data = data_reader.read(batch_size=1)
 
-xd = generative_pipeline_tower(data[1], data[0][1])
+xd = representation_pipeline_tower(data[1], data[0][1])
 
 with tf.train.SingularMonitoredSession() as sess:
     d = sess.run(xd)
