@@ -60,13 +60,13 @@ def sample_gaussian(mu, sigma=1.):
     return tf.multiply(tf.math.add(mu, sampled), sigma)
 
 def prior_posterior(h_i, n_features):
-    gaussianStats = conv_block(h_i, 2*n_features, (5, 5), (1, 1))
-    means = gaussianStats[:, :, :, 0:n_features]
-    stds = gaussianStats[:, :, :, n_features:]
+    gaussianParams = conv_block(h_i, 2*n_features, (5, 5), (1, 1))
+    means = gaussianParams[:, :, :, 0:n_features]
+    stds = gaussianParams[:, :, :, n_features:]
     stds = tf.nn.softmax(stds)
-    gaussianStats = (means, stds)
-    latent = tf.map_fn(lambda stats : sample_gaussian(stats[0], stats[1]), gaussianStats, dtype=tf.float32)
-    return latent
+    gaussianParamsTuple = (means, stds)
+    latent = tf.map_fn(lambda stats : sample_gaussian(stats[0], stats[1]), gaussianParamsTuple, dtype=tf.float32)
+    return latent, gaussianParams
 
 def recon_loss(x_true, x_pred):
     tf.sigmoid_cross_entropy_with_logits(labels=x_true, logits=x_pred)
@@ -101,6 +101,40 @@ def lstm_cell(concat, c):
 
     return h, c
 
+def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, i, ta):
+
+    prior, prior_params = prior_posterior(h_g, 256)
+
+    #generation
+    concat_g = tf.concat([h_g, v_q, r, prior], 3)
+    h_g, c_g = lstm_cell(concat_g, c_g)
+    u_g = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u_g)
+
+    #inference
+    concat_i = tf.concat([h_i, v_q, x_q], 3)
+    h_i, c_i = lstm_cell(concat_i, c_i)
+    posterior, posterior_params = prior_posterior(h_i, 256)
+
+    return h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, i, ta
+
+
+def training_loop(x, v, v_q, x_q):
+    h_g = tf.zeros([1, 16, 16, 256], 0, 1)
+    c_g = tf.zeros([1, 16, 16, 256], 0, 1)
+    u_g = tf.zeros([1, 64, 64, 256], 0, 1)
+
+    r = tf.random_normal([1, 16, 16, 256], 0, 1)
+
+    h_i = tf.zeros([1, 16, 16, 256], 0, 1)
+    c_i = tf.zeros([1, 16, 16, 256], 0, 1)
+
+    v_q = tf.random_normal([1, 16, 16, 7], 0, 1)
+    x_q = tf.random_normal([1, 16, 16, 256], 0, 1)
+
+    stuff = body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, 12)
+
+    return stuff
+
 root_path = 'data'
 data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
 data = data_reader.read(batch_size=1)
@@ -109,13 +143,15 @@ print(data[1])
 #xd = representation_pipeline_tower(data[1], data[0][1])
 #someTensor = tf.random_normal([1, 16, 16, 256], 0, 1)
 #test = prior_posterior(someTensor, someTensor.shape[-1])
-u_L = tf.random_normal([1, 64, 64, 256], 0, 1)
-output_images = observation_sample(u_L)
-output_images = tf.clip_by_value(output_images, 0, 1)
+#u_L = tf.random_normal([1, 64, 64, 256], 0, 1)
+#output_images = observation_sample(u_L)
+#output_images = tf.clip_by_value(output_images, 0, 1)
+
+stuff = training_loop(1, 2, 3, 4)
 
 with tf.train.SingularMonitoredSession() as sess:
     d = sess.run(output_images)
-    plt.imshow(d[0, :, :, :])
-    plt.show()
+    #plt.imshow(d[0, :, :, :])
+    #plt.show()
 
 a = 1
