@@ -68,6 +68,19 @@ def image_reconstruction(sampled):
     #x = tf.layers.conv2d_transpose(sampled, 128, 3, 16, 'SAME')
 
 
+def lstm_cell(concat, c):
+    forget = tf.nn.sigmoid(conv_block(concat, 256, (5, 5), (1, 1)))
+    input = tf.nn.sigmoid(conv_block(concat, 256, (5, 5), (1, 1)))
+    cell = tf.nn.tanh(conv_block(concat, 256, (5, 5), (1, 1)))
+    output = tf.nn.sigmoid(conv_block(concat, 256, (5, 5), (1, 1)))
+
+    c = tf.math.multiply(c, forget)
+    c = tf.math.add(c, tf.math.multiply(input, cell))
+
+    h = tf.math.multiply(output, tf.nn.tanh(c))
+
+    return h, c
+
 root_path = 'data'
 data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
 data = data_reader.read(batch_size=1)
