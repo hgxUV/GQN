@@ -9,9 +9,12 @@ def conv_block(prev, size, k: tuple, s: tuple):
     return tf.nn.relu(after_conv)
 
 
-# x shape: (1, 64, 64, 3), v shape: (1, 1, 7)
+# x shape: (1, 64, 64, 3), v shape: (1, 7)
 def representation_pipeline_tower(x, v):
-    input_v = tf.broadcast_to(v, (16, 16, 7))
+    assert x.shape == (1, 64, 64, 3)
+    assert v.shape == (1, 7)
+
+    input_v = tf.broadcast_to(tf.expand_dims(v, 0), (1, 16, 16, 7))
 
     test = conv_block(x, 256, (2, 2), (2, 2))
 
@@ -32,8 +35,25 @@ def representation_pipeline_tower(x, v):
     return conv_block(test8, 256, (1, 1), (1, 1))
 
 
-def add_to_r(r, new_part):
-    return tf.math.add(r, new_part)
+# frames shape: (5, 64, 64, 3), v shape: (5, 7)
+def create_representation(frames, cameras):
+    assert frames.shape[0] == cameras.shape[0]
+    assert len(frames.shape) == 4
+    assert len(cameras.shape) == 2
+
+    iterations = frames.shape[0]
+    r = [None] * iterations
+
+    for i in range(iterations):
+        r[i] = representation_pipeline_tower(tf.expand_dims(frames[i], 0), tf.expand_dims(cameras[i], 0))
+
+    ret = tf.zeros(r[0].shape)
+
+    for rr in r:
+        ret = tf.math.add(ret, rr)
+
+    return ret
+
 
 def sample_gaussian(mu, sigma=1.):
     sampled = tf.random_normal((), mean=0., stddev=1.)
