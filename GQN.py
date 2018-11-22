@@ -9,11 +9,11 @@ def conv_block(prev, size, k: tuple, s: tuple):
     return tf.nn.relu(after_conv)
 
 
+# x shape: (1, 64, 64, 3), v shape: (1, 1, 7)
 def representation_pipeline_tower(x, v):
-    input_img = x
-    input_v = tf.broadcast_to(v, (1, 16, 16, 7))
+    input_v = tf.broadcast_to(v, (16, 16, 7))
 
-    test = conv_block(input_img, 256, (2, 2), (2, 2))
+    test = conv_block(x, 256, (2, 2), (2, 2))
 
     # first residual
     test2 = conv_block(test, 128, (3, 3), (1, 1))
