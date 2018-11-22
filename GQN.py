@@ -5,7 +5,8 @@ import matplotlib.pyplot as plt
 
 def conv_block(prev, size, k: tuple, s: tuple):
     size_policy = 'same' if s == (1, 1) else 'valid'
-    return tf.layers.conv2d(prev, size, k, s, size_policy)
+    after_conv = tf.layers.conv2d(prev, size, k, s, size_policy)
+    return tf.nn.relu(after_conv)
 
 
 def representation_pipeline_tower(x, v):
