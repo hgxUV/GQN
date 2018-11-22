@@ -35,13 +35,50 @@ def add_to_r(r, new_part):
     return tf.math.add(r, new_part)
 
 
+
+def sample_gaussian(mu, sigma=1.):
+    sampled = tf.random_normal((), mean=0., stddev=1.)
+    return tf.multiply(tf.math.add(mu, sampled), sigma)
+
+def prior_posterior(h_i):
+    gaussianStats = conv_block(h_i, 2, (5, 5), (1, 1))
+    means = gaussianStats[:, :, :, 0]
+    stds = gaussianStats[:, :, :, 1]
+    gaussianStats = (means, stds)
+    latent = tf.map_fn(lambda stats : sample_gaussian(stats[0], stats[1]), gaussianStats, dtype=tf.float32)
+    return latent
+
+def recon_loss(x_true, x_pred):
+    tf.sigmoid_cross_entropy_with_logits(labels=x_true, logits=x_pred)
+
+def regularization_loss(prior, posterior):
+    pass
+
+def loss():
+    return recon_loss + regularization_loss
+
+def observation_sample(u_L):
+    means = conv_block(u_L, 1, (1, 1), (1, 1))
+    x = tf.map_fn(lambda mean : sample_gaussian(mean), means, dtype=tf.float32)
+    return x
+
+def image_reconstruction(sampled):
+    pass
+    #dunno how to to that
+    #x = tf.layers.conv2d_transpose(sampled, 128, 3, 16, 'SAME')
+
+
+
 root_path = 'data'
-data_reader = DataReader(dataset='jaco', context_size=5, root=root_path)
+data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
 data = data_reader.read(batch_size=1)
+print(data[1])
 
 xd = representation_pipeline_tower(data[1], data[0][1])
+someTensor = tf.random_normal([1, 16, 16, 256], 0, 1)
+test = prior_posterior(someTensor)
 
 with tf.train.SingularMonitoredSession() as sess:
-    d = sess.run(xd)
-    print(data[0])
+    d = sess.run(test)
 
+a = 1
