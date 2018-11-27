@@ -2,6 +2,8 @@ import tensorflow as tf
 from data_reader import DataReader
 import matplotlib.pyplot as plt
 
+SIGMA = 1
+
 
 def conv_block(prev, size, k: tuple, s: tuple):
     size_policy = 'same' if s == (1, 1) else 'valid'
@@ -64,28 +66,31 @@ def prior_posterior(h_i, n_features):
     means = gaussianParams[:, :, :, 0:n_features]
     stds = gaussianParams[:, :, :, n_features:]
     stds = tf.nn.softmax(stds)
-    gaussianParamsTuple = (means, stds)
-    latent = tf.map_fn(lambda stats : sample_gaussian(stats[0], stats[1]), gaussianParamsTuple, dtype=tf.float32)
-    return latent, gaussianParams
+    distributions = tf.distributions.Normal(loc=means, scale=stds)
+    latent = distributions.sample()
+    return (latent, gaussianParams)
 
 def recon_loss(x_true, x_pred):
     tf.sigmoid_cross_entropy_with_logits(labels=x_true, logits=x_pred)
 
 def regularization_loss(prior, posterior):
+    #TODO this stuff here
     pass
 
-def loss():
-    return recon_loss + regularization_loss
+def calculate_loss(priors, posteriors, x_pred, x_q):
+    return recon_loss(x_q, x_pred) + regularization_loss(priors, posteriors)
 
 def observation_sample(u_L):
     means = conv_block(u_L, 3, (1, 1), (1, 1))
     x = tf.map_fn(lambda mean : sample_gaussian(mean), means, dtype=tf.float32)
     return x
 
-def image_reconstruction(sampled):
-    pass
-    #dunno how to to that
-    #x = tf.layers.conv2d_transpose(sampled, 128, 3, 16, 'SAME')
+def image_reconstruction(u):
+    x = conv_block(u, 3, (1, 1), (1, 1))
+    stds = tf.multiply(tf.ones(x.shape), SIGMA)
+    dist = tf.distributions.Normal(loc=x, scale=stds)
+    x_pred = dist.sample()
+    return x_pred
 
 
 def lstm_cell(concat, c):
@@ -101,39 +106,58 @@ def lstm_cell(concat, c):
 
     return h, c
 
-def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, i, ta):
-
-    prior, prior_params = prior_posterior(h_g, 256)
+def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i):
 
     #generation
-    concat_g = tf.concat([h_g, v_q, r, prior], 3)
+    prior_latent, prior_params = prior_posterior(h_g, n_reg_features)
+    priors.concat(prior_params)
+
+    concat_g = tf.concat([h_g, v_q, r, prior_latent], 3)
     h_g, c_g = lstm_cell(concat_g, c_g)
     u_g = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u_g)
 
     #inference
     concat_i = tf.concat([h_i, v_q, x_q], 3)
     h_i, c_i = lstm_cell(concat_i, c_i)
-    posterior, posterior_params = prior_posterior(h_i, 256)
+    #TODO find out what to do with posterior_latent
+    posterior_latent, posterior_params = prior_posterior(h_i, n_reg_features)
+    posteriors.concat(posterior_params)
 
-    return h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, i, ta
+    return h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i
 
 
-def training_loop(x, v, v_q, x_q):
-    h_g = tf.zeros([1, 16, 16, 256], 0, 1)
-    c_g = tf.zeros([1, 16, 16, 256], 0, 1)
-    u_g = tf.zeros([1, 64, 64, 256], 0, 1)
+def architecture(x, v, v_q, x_q):
+    h_g = tf.zeros([x.shape[-1], 16, 16, 256])
+    c_g = tf.zeros([x.shape[-1], 16, 16, 256])
+    u_g = tf.zeros([x.shape[-1], 64, 64, 256])
 
-    r = tf.random_normal([1, 16, 16, 256], 0, 1)
+    #TODO use tower architecture here
+    r = tf.random_normal([x.shape[-1], 16, 16, 256], 0, 1)
 
-    h_i = tf.zeros([1, 16, 16, 256], 0, 1)
-    c_i = tf.zeros([1, 16, 16, 256], 0, 1)
+    h_i = tf.zeros([x.shape[-1], 16, 16, 256])
+    c_i = tf.zeros([x.shape[-1], 16, 16, 256])
 
-    v_q = tf.random_normal([1, 16, 16, 7], 0, 1)
-    x_q = tf.random_normal([1, 16, 16, 256], 0, 1)
+    #TODO these are not random xd
+    v_q = tf.random_normal([x.shape[-1], 16, 16, 7], 0, 1)
+    x_q = tf.random_normal([x.shape[-1], 16, 16, 256], 0, 1)
 
-    stuff = body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, 12)
+    n_reg_features = 256
+    i = 0
+    priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[None, 16, 16, n_reg_features])
+    posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[None, 16, 16, n_reg_features])
 
-    return stuff
+    variables = (h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i)
+
+    stuff = body(variables)
+    cond = lambda variables : tf.less(12, i)
+    variables = tf.while_loop(stuff, cond, variables)
+    h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i = variables
+
+    x_pred = image_reconstruction(u_g)
+    #TODO reconstruction loss, distribution loss
+    loss = calculate_loss(priors, posteriors, x_pred, x_q)
+
+    return x_pred, loss
 
 root_path = 'data'
 data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
@@ -147,10 +171,10 @@ print(data[1])
 #output_images = observation_sample(u_L)
 #output_images = tf.clip_by_value(output_images, 0, 1)
 
-stuff = training_loop(1, 2, 3, 4)
+stuff = architecture(data[1], 2, 3, 4)
 
 with tf.train.SingularMonitoredSession() as sess:
-    d = sess.run(output_images)
+    d = sess.run(stuff)
     #plt.imshow(d[0, :, :, :])
     #plt.show()
 
