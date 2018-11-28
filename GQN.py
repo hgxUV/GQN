@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 
 SIGMA = 1
 BATCH_SIZE = 10
+L = 12
+n_reg_features = 256
 
 
 def conv_block(prev, size, k: tuple, s: tuple):
@@ -62,10 +64,10 @@ def sample_gaussian(mu, sigma=1.):
     sampled = tf.random_normal((), mean=0., stddev=1.)
     return tf.multiply(tf.math.add(mu, sampled), sigma)
 
-def prior_posterior(h_i, n_features):
-    gaussianParams = conv_block(h_i, 2*n_features, (5, 5), (1, 1))
-    means = gaussianParams[:, :, :, 0:n_features]
-    stds = gaussianParams[:, :, :, n_features:]
+def prior_posterior(h_i):
+    gaussianParams = conv_block(h_i, 2*n_reg_features, (5, 5), (1, 1))
+    means = gaussianParams[:, :, :, 0:n_reg_features]
+    stds = gaussianParams[:, :, :, n_reg_features:]
     stds = tf.nn.softmax(stds)
     distributions = tf.distributions.Normal(loc=means, scale=stds)
     latent = distributions.sample()
@@ -107,24 +109,30 @@ def lstm_cell(concat, c):
 
     return h, c
 
-def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i):
+def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
 
     #generation
-    prior_latent, prior_params = prior_posterior(h_g, n_reg_features)
-    priors = priors.concat(prior_params)
+    prior_latent, prior_params = prior_posterior(h_g)
+    priors = priors.write(i, prior_params)
 
     concat_g = tf.concat([h_g, v_q, r, prior_latent], 3)
     h_g, c_g = lstm_cell(concat_g, c_g)
     u_g = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u_g)
 
     #inference
-    concat_i = tf.concat([h_i, v_q, x_q], 3)
+    concat_i = tf.concat([h_i, tf.broadcast_to(v_q, (v_q.shape[0], 64, 64, v_q.shape[-1])), x_q], 3)
     h_i, c_i = lstm_cell(concat_i, c_i)
     #TODO find out what to do with posterior_latent
-    posterior_latent, posterior_params = prior_posterior(h_i, n_reg_features)
-    posteriors.concat(posterior_params)
+    posterior_input = tf.layers.max_pooling2d(h_i, (4, 4), (4, 4), padding='SAME')
+    posterior_latent, posterior_params = prior_posterior(posterior_input)
+    posteriors = posteriors.write(i, posterior_params)
 
-    return h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i
+    i += 1
+
+    return h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i
+
+def cond(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
+    return tf.less(i, L)
 
 
 def architecture(x, v, v_q, x_q):
@@ -135,24 +143,24 @@ def architecture(x, v, v_q, x_q):
     #TODO use tower architecture here
     r = create_representation(x, v)
 
-    h_i = tf.zeros([x.shape[0], 16, 16, 256])
-    c_i = tf.zeros([x.shape[0], 16, 16, 256])
+    h_i = tf.zeros([x.shape[0], 64, 64, 256])
+    c_i = tf.zeros([x.shape[0], 64, 64, 256])
 
-    n_reg_features = 256
     i = 0
-    priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[None, 16, 16, n_reg_features])
-    posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[None, 16, 16, n_reg_features])
+    priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])
+    posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])
 
-    variables = (h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i)
+    v_q = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v_q, 1), 1), (x.shape[0], 16, 16, 7))
 
-    stuff = body(*variables)
-    cond = lambda variables : tf.less(12, i)
-    variables = tf.while_loop(stuff, cond, variables)
-    h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i = variables
+    variables = (h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i)
+    #variables = body(*variables)
 
-    x_pred = image_reconstruction(u_g)
+    variables = tf.while_loop(cond, body, variables)
+    h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i = variables
+
+    #x_pred = image_reconstruction(u_g)
     #TODO reconstruction loss, distribution loss
-    loss = calculate_loss(priors, posteriors, x_pred, x_q)
+    #loss = calculate_loss(priors, posteriors, x_pred, x_q)
 
     return x_pred, loss
 
