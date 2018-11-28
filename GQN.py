@@ -3,6 +3,7 @@ from data_reader import DataReader
 import matplotlib.pyplot as plt
 
 SIGMA = 1
+BATCH_SIZE = 10
 
 
 def conv_block(prev, size, k: tuple, s: tuple):
@@ -13,10 +14,10 @@ def conv_block(prev, size, k: tuple, s: tuple):
 
 # x shape: (1, 64, 64, 3), v shape: (1, 7)
 def representation_pipeline_tower(x, v):
-    assert x.shape == (1, 64, 64, 3)
-    assert v.shape == (1, 7)
+    #assert x.shape == (1, 64, 64, 3)
+    #assert v.shape == (1, 7)
 
-    input_v = tf.broadcast_to(tf.expand_dims(v, 0), (1, 16, 16, 7))
+    input_v = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v, 1), 1), (x.shape[0], 16, 16, 7))
 
     test = conv_block(x, 256, (2, 2), (2, 2))
 
@@ -39,15 +40,15 @@ def representation_pipeline_tower(x, v):
 
 # frames shape: (5, 64, 64, 3), v shape: (5, 7)
 def create_representation(frames, cameras):
-    assert frames.shape[0] == cameras.shape[0]
-    assert len(frames.shape) == 4
-    assert len(cameras.shape) == 2
+    #assert frames.shape[0] == cameras.shape[0]
+    #assert len(frames.shape) == 4
+    #assert len(cameras.shape) == 2
 
-    iterations = frames.shape[0]
+    iterations = frames.shape[1]
     r = [None] * iterations
 
     for i in range(iterations):
-        r[i] = representation_pipeline_tower(tf.expand_dims(frames[i], 0), tf.expand_dims(cameras[i], 0))
+        r[i] = representation_pipeline_tower(frames[:, i, :, :, :], cameras[:, i, :])
 
     ret = tf.zeros(r[0].shape)
 
@@ -110,7 +111,7 @@ def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posterior
 
     #generation
     prior_latent, prior_params = prior_posterior(h_g, n_reg_features)
-    priors.concat(prior_params)
+    priors = priors.concat(prior_params)
 
     concat_g = tf.concat([h_g, v_q, r, prior_latent], 3)
     h_g, c_g = lstm_cell(concat_g, c_g)
@@ -127,19 +128,15 @@ def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posterior
 
 
 def architecture(x, v, v_q, x_q):
-    h_g = tf.zeros([x.shape[-1], 16, 16, 256])
-    c_g = tf.zeros([x.shape[-1], 16, 16, 256])
-    u_g = tf.zeros([x.shape[-1], 64, 64, 256])
+    h_g = tf.zeros([x.shape[0], 16, 16, 256])
+    c_g = tf.zeros([x.shape[0], 16, 16, 256])
+    u_g = tf.zeros([x.shape[0], 64, 64, 256])
 
     #TODO use tower architecture here
-    r = tf.random_normal([x.shape[-1], 16, 16, 256], 0, 1)
+    r = create_representation(x, v)
 
-    h_i = tf.zeros([x.shape[-1], 16, 16, 256])
-    c_i = tf.zeros([x.shape[-1], 16, 16, 256])
-
-    #TODO these are not random xd
-    v_q = tf.random_normal([x.shape[-1], 16, 16, 7], 0, 1)
-    x_q = tf.random_normal([x.shape[-1], 16, 16, 256], 0, 1)
+    h_i = tf.zeros([x.shape[0], 16, 16, 256])
+    c_i = tf.zeros([x.shape[0], 16, 16, 256])
 
     n_reg_features = 256
     i = 0
@@ -148,7 +145,7 @@ def architecture(x, v, v_q, x_q):
 
     variables = (h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i)
 
-    stuff = body(variables)
+    stuff = body(*variables)
     cond = lambda variables : tf.less(12, i)
     variables = tf.while_loop(stuff, cond, variables)
     h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, n_reg_features, priors, posteriors, i = variables
@@ -161,8 +158,11 @@ def architecture(x, v, v_q, x_q):
 
 root_path = 'data'
 data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
-data = data_reader.read(batch_size=1)
-print(data[1])
+data = data_reader.read(batch_size=BATCH_SIZE)
+x = data.query.context.frames
+v = data.query.context.cameras
+x_q = data.target
+v_q = data.query.query_camera
 
 #xd = representation_pipeline_tower(data[1], data[0][1])
 #someTensor = tf.random_normal([1, 16, 16, 256], 0, 1)
@@ -171,7 +171,7 @@ print(data[1])
 #output_images = observation_sample(u_L)
 #output_images = tf.clip_by_value(output_images, 0, 1)
 
-stuff = architecture(data[1], 2, 3, 4)
+stuff = architecture(x, v, v_q, x_q)
 
 with tf.train.SingularMonitoredSession() as sess:
     d = sess.run(stuff)
