@@ -106,18 +106,18 @@ def image_reconstruction(u):
     return x_pred
 
 
-def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
+def body(state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i):
     #generation
-    prior_latent, prior_params = prior_posterior(h_g)
+    prior_latent, prior_params = prior_posterior(state_g.h)
     priors = priors.write(i, prior_params)
 
-    concat_g = tf.concat([h_g, v_q, r, prior_latent], 3)
-    h_g, c_g = gen_cell(concat_g, c_g)
+    concat_g = tf.concat([v_q, r, prior_latent], 3)
+    h_g, state_g = gen_cell(concat_g, state_g)
     u_g = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u_g)
 
     #inference
-    concat_i = tf.concat([h_i, tf.broadcast_to(v_q, (v_q.shape[0], 64, 64, v_q.shape[-1])), x_q], 3)
-    h_i, c_i = inf_cell(concat_i, c_i)
+    concat_i = tf.concat([tf.broadcast_to(v_q, (v_q.shape[0], 64, 64, v_q.shape[-1])), x_q], 3)
+    h_i, state_i = inf_cell(concat_i, state_i)
 
     #TODO find out what to do with posterior_latent
     posterior_input = tf.layers.max_pooling2d(h_i, (4, 4), (4, 4), padding='SAME')
@@ -126,22 +126,20 @@ def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
 
     i += 1
 
-    return h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i
+    return state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i
 
-def cond(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
+def cond(state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i):
     dec = tf.less(L, i)
     return dec
 
 
 def architecture(x, v, v_q, x_q):
-    h_g = tf.zeros([x.shape[0], 16, 16, 256])
-    c_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32')
+    state_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32') # c + h
     u_g = tf.zeros([x.shape[0], 64, 64, 256])
 
     r = create_representation(x, v)
 
-    h_i = tf.zeros([x.shape[0], 64, 64, 256])
-    c_i = inf_cell.zero_state(BATCH_SIZE, dtype='float32')
+    state_i = inf_cell.zero_state(BATCH_SIZE, dtype='float32') # c + h
 
     i = 0
     priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])
@@ -149,17 +147,19 @@ def architecture(x, v, v_q, x_q):
 
     v_q = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v_q, 1), 1), (x.shape[0], 16, 16, 7))
 
-    variables = (h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i)
+    variables = (state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i)
     #variables = body(*variables)
 
     variables = tf.while_loop(cond, body, variables)
-    h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i = variables
+    state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i = variables
 
     x_pred = image_reconstruction(u_g)
     #TODO reconstruction loss, distribution loss
     loss = calculate_loss(priors, posteriors, x_pred, x_q)
 
     return x_pred, loss
+
+tf.reset_default_graph()
 
 root_path = 'data'
 data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
