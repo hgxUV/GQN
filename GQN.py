@@ -9,6 +9,10 @@ n_reg_features = 256
 EPOCHS = 10
 
 
+gen_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 266], output_channels=256, kernel_shape=[5, 5], name='gen_cell')  # TODO: output channels, skip connection?
+inf_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[64, 64, 1066], output_channels=256, kernel_shape=[5, 5], name='inf_cell')  # TODO: output channels, skip connection?
+
+
 def conv_block(prev, size, k: tuple, s: tuple):
     size_policy = 'same' if s == (1, 1) else 'valid'
     after_conv = tf.layers.conv2d(prev, size, k, s, size_policy)
@@ -102,32 +106,19 @@ def image_reconstruction(u):
     return x_pred
 
 
-def lstm_cell(concat, c):
-    forget = tf.nn.sigmoid(conv_block(concat, 256, (5, 5), (1, 1)))
-    input = tf.nn.sigmoid(conv_block(concat, 256, (5, 5), (1, 1)))
-    cell = tf.nn.tanh(conv_block(concat, 256, (5, 5), (1, 1)))
-    output = tf.nn.sigmoid(conv_block(concat, 256, (5, 5), (1, 1)))
-
-    c = tf.math.multiply(c, forget)
-    c = tf.math.add(c, tf.math.multiply(input, cell))
-
-    h = tf.math.multiply(output, tf.nn.tanh(c))
-
-    return h, c
-
 def body(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
-
     #generation
     prior_latent, prior_params = prior_posterior(h_g)
     priors = priors.write(i, prior_params)
 
     concat_g = tf.concat([h_g, v_q, r, prior_latent], 3)
-    h_g, c_g = lstm_cell(concat_g, c_g)
+    h_g, c_g = gen_cell(concat_g, c_g)
     u_g = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u_g)
 
     #inference
     concat_i = tf.concat([h_i, tf.broadcast_to(v_q, (v_q.shape[0], 64, 64, v_q.shape[-1])), x_q], 3)
-    h_i, c_i = lstm_cell(concat_i, c_i)
+    h_i, c_i = inf_cell(concat_i, c_i)
+
     #TODO find out what to do with posterior_latent
     posterior_input = tf.layers.max_pooling2d(h_i, (4, 4), (4, 4), padding='SAME')
     posterior_latent, posterior_params = prior_posterior(posterior_input)
@@ -144,14 +135,13 @@ def cond(h_g, c_g, u_g, r, v_q, x_q, h_i, c_i, priors, posteriors, i):
 
 def architecture(x, v, v_q, x_q):
     h_g = tf.zeros([x.shape[0], 16, 16, 256])
-    c_g = tf.zeros([x.shape[0], 16, 16, 256])
+    c_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32')
     u_g = tf.zeros([x.shape[0], 64, 64, 256])
 
-    #TODO use tower architecture here
     r = create_representation(x, v)
 
     h_i = tf.zeros([x.shape[0], 64, 64, 256])
-    c_i = tf.zeros([x.shape[0], 64, 64, 256])
+    c_i = inf_cell.zero_state(BATCH_SIZE, dtype='float32')
 
     i = 0
     priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])
