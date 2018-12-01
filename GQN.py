@@ -17,28 +17,25 @@ def conv_block(prev, size, k: tuple, s: tuple):
 
 # x shape: (1, 64, 64, 3), v shape: (1, 7)
 def representation_pipeline_tower(x, v):
-    #assert x.shape == (1, 64, 64, 3)
-    #assert v.shape == (1, 7)
+    v = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v, 1), 1), (x.shape[0], 16, 16, 7))
 
-    input_v = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v, 1), 1), (x.shape[0], 16, 16, 7))
-
-    test = conv_block(x, 256, (2, 2), (2, 2))
+    x = conv_block(x, 256, (2, 2), (2, 2))
 
     # first residual
-    test2 = conv_block(test, 128, (3, 3), (1, 1))
-    test3 = tf.concat([test, test2], 3)
-    test4 = conv_block(test3, 256, (2, 2), (2, 2))
+    y = conv_block(x, 128, (3, 3), (1, 1))
+    x = tf.concat([x, y], 3)
+    x = conv_block(x, 256, (2, 2), (2, 2))
 
     # add v
-    test5 = tf.concat([test4, input_v], 3)
+    x = tf.concat([x, v], 3)
 
     # second residual
-    test6 = conv_block(test5, 128, (3, 3), (1, 1))
-    test7 = tf.concat([test6, test5], 3)
-    test8 = conv_block(test7, 256, (3, 3), (1, 1))
+    y = conv_block(x, 128, (3, 3), (1, 1))
+    x = tf.concat([x, y], 3)
+    x = conv_block(x, 256, (3, 3), (1, 1))
 
     # last conv
-    return conv_block(test8, 256, (1, 1), (1, 1))
+    return conv_block(x, 256, (1, 1), (1, 1))
 
 
 # frames shape: (5, 64, 64, 3), v shape: (5, 7)
