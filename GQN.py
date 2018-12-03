@@ -106,36 +106,48 @@ def image_reconstruction(u):
     return x_pred
 
 
-def body(state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i):
+def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i, training):
+
+    #inference
+    if(training):
+        #TODO make x_q 16x16 somehow, mby tower representation is a good option
+        concat_i = tf.concat([x_q,
+                              tf.broadcast_to(v_q, (v_q.shape[0], 16, 16, v_q.shape[-1])),
+                              r,
+                              state_g.h,
+                              ], 3)
+        h_i, state_i = inf_cell(concat_i, state_i)
+
+        posterior_input = tf.layers.max_pooling2d(h_i, (4, 4), (4, 4), padding='SAME')
+        posterior_latent, posterior_params = prior_posterior(posterior_input)
+        posteriors = posteriors.write(i, posterior_params)
+
     #generation
     prior_latent, prior_params = prior_posterior(state_g.h)
     priors = priors.write(i, prior_params)
 
-    concat_g = tf.concat([v_q, r, prior_latent], 3)
+    if(training):
+        prior_latent = posterior_latent
+
+    concat_g = tf.concat([v_q,
+                          r,
+                          u,
+                          prior_latent], 3)
     h_g, state_g = gen_cell(concat_g, state_g)
-    u_g = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u_g)
-
-    #inference
-    concat_i = tf.concat([tf.broadcast_to(v_q, (v_q.shape[0], 64, 64, v_q.shape[-1])), x_q], 3)
-    h_i, state_i = inf_cell(concat_i, state_i)
-
-    #TODO find out what to do with posterior_latent
-    posterior_input = tf.layers.max_pooling2d(h_i, (4, 4), (4, 4), padding='SAME')
-    posterior_latent, posterior_params = prior_posterior(posterior_input)
-    posteriors = posteriors.write(i, posterior_params)
+    u = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME'), u)
 
     i += 1
 
-    return state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i
+    return state_g, u, r, v_q, x_q, state_i, priors, posteriors, i, training
 
-def cond(state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i):
+def cond(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i, training):
     dec = tf.less(L, i)
     return dec
 
 
-def architecture(x, v, v_q, x_q):
+def architecture(x, v, v_q, x_q, training):
     state_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32') # c + h
-    u_g = tf.zeros([x.shape[0], 64, 64, 256])
+    u = tf.zeros([x.shape[0], 64, 64, 256])
 
     r = create_representation(x, v)
 
@@ -147,13 +159,12 @@ def architecture(x, v, v_q, x_q):
 
     v_q = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v_q, 1), 1), (x.shape[0], 16, 16, 7))
 
-    variables = (state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i)
-    #variables = body(*variables)
+    variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, i, training)
 
     variables = tf.while_loop(cond, body, variables)
-    state_g, u_g, r, v_q, x_q, state_i, priors, posteriors, i = variables
+    state_g, u, r, v_q, x_q, state_i, priors, posteriors, i, training = variables
 
-    x_pred = image_reconstruction(u_g)
+    x_pred = image_reconstruction(u)
     #TODO reconstruction loss, distribution loss
     loss = calculate_loss(priors, posteriors, x_pred, x_q)
 
@@ -181,15 +192,16 @@ v_q = data.query.query_camera
 #v = tf.placeholder(tf.float32, [BATCH_SIZE, 5, 7], 'v')
 #v_q = tf.placeholder(tf.float32, [BATCH_SIZE, 7], 'v_q')
 #x_q = tf.placeholder(tf.float32, [BATCH_SIZE, 64, 64, 3], 'x_q')
-image, loss = architecture(x, v, v_q, x_q)
+image, loss = architecture(x, v, v_q, x_q, training=True)
 train_op = optimizer.minimize(loss)
 
 with tf.train.SingularMonitoredSession() as sess:
     for i in range(EPOCHS):
         for _ in range(4):
-            image, train_op = sess.run([image, train_op])#, feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
-            print(train_op)
-            plt.imshow(image[0, ...])
+            #image, train_op = sess.run([image, train_op])#, feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+            x_pred, loss = sess.run([image, train_op])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+            print(loss)
+            plt.imshow(x_pred[0, 0, ...])
             plt.show()
 
 a = 1
