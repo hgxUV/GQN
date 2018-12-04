@@ -87,12 +87,6 @@ def regularization_loss(prior, posterior):
     posterior = posterior.concat()
     distritution = lambda x : tf.distributions.Normal(loc=x[:, :, :, 0:n_reg_features],
                                                       scale=x[:, :, :, n_reg_features:])
-    '''prior_l = prior[:, :, :, 0:n_reg_features]
-    prior_s = prior[:, :, :, n_reg_features:]
-    posterior_l = posterior[:, :, :, 0:n_reg_features]
-    posterior_s = posterior[:, :, :, n_reg_features:]
-    with tf.train.SingularMonitoredSession() as sess:
-        a, b, c, d = sess.run([prior_l, prior_s, posterior_l,posterior_s])'''
     prior = distritution(prior)
     posterior = distritution(posterior)
     reg_loss = tf.distributions.kl_divergence(posterior, prior)
@@ -149,7 +143,7 @@ def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
     return state_g, u, r, v_q, x_q, state_i, priors, posteriors, i
 
 def cond(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
-    dec = tf.less(L, i)
+    dec = tf.less(i, L)
     return dec
 
 
@@ -175,16 +169,11 @@ def architecture(x, v, v_q, x_q, training_local):
     variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, i)
 
     variables = tf.while_loop(cond, body, variables, parallel_iterations=1)
-    #variables = body(*variables)
-    #variables = body(*variables)
-    #variables = body(*variables)
 
     state_g, u, r, v_q, x_q, state_i, priors, posteriors, i = variables
 
     x_pred = image_reconstruction(u)
     loss = calculate_loss(priors, posteriors, x_pred, x_gt)
-
-    tf.TensorArray.write()
 
     return x_pred, loss
 
@@ -192,12 +181,6 @@ tf.reset_default_graph()
 
 root_path = 'data'
 data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
-#xd = representation_pipeline_tower(data[1], data[0][1])
-#someTensor = tf.random_normal([1, 16, 16, 256], 0, 1)
-#test = prior_posterior(someTensor, someTensor.shape[-1])
-#u_L = tf.random_normal([1, 64, 64, 256], 0, 1)
-#output_images = observation_sample(u_L)
-#output_images = tf.clip_by_value(output_images, 0, 1)
 
 optimizer = tf.train.AdamOptimizer()
 data = data_reader.read(batch_size=BATCH_SIZE)
@@ -206,17 +189,13 @@ v = data.query.context.cameras
 x_q = data.target
 v_q = data.query.query_camera
 
-#x = tf.placeholder(tf.float32, [BATCH_SIZE, 5, 64, 64, 3], 'x')
-#v = tf.placeholder(tf.float32, [BATCH_SIZE, 5, 7], 'v')
-#v_q = tf.placeholder(tf.float32, [BATCH_SIZE, 7], 'v_q')
-#x_q = tf.placeholder(tf.float32, [BATCH_SIZE, 64, 64, 3], 'x_q')
+
 image, loss = architecture(x, v, v_q, x_q, training_local=True)
 train_op = optimizer.minimize(loss)
 
 with tf.train.SingularMonitoredSession() as sess:
     for i in range(EPOCHS):
         for _ in range(4):
-            #image, train_op = sess.run([image, train_op])#, feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
             x_pred, loss_value = sess.run([image, loss])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
             print(loss_value)
             plt.imshow(x_pred[0, ...])
