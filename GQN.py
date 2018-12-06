@@ -3,10 +3,12 @@ from data_reader import DataReader
 import matplotlib.pyplot as plt
 
 SIGMA = 1
-BATCH_SIZE = 10
+BATCH_SIZE = 20
 L = 12
 n_reg_features = 256
 EPOCHS = 100
+RECORDS_IN_TF_RECORD = 5000
+TF_RECORDS = 20
 
 
 #TODO ask someone qualified about these global thingies
@@ -193,15 +195,21 @@ v_q = data.query.query_camera
 train_output, train_loss = generative_query_network(x, v, v_q, x_q, training_local=True)
 train_op = optimizer.minimize(train_loss)
 
+
 with tf.train.SingularMonitoredSession() as sess:
     for i in range(EPOCHS):
         total_loss = []
-        for j in range(0, 20, BATCH_SIZE):
+        j = 0
+        for j in range(int((TF_RECORDS * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
             x_pred, x_gt, loss_value = sess.run([train_output, x_q, train_loss])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+            #x_gt = sess.run(x_q)
             total_loss.append(loss_value)
             print(loss_value)
-            plt.imshow(x_gt[0, ...])
-            plt.show()
-            plt.imshow(x_pred[0, ...])
-            plt.show()
+            #plt.imshow(x_gt[0, ...])
+            #plt.show()
+            #plt.imshow(x_pred[0, ...])
+            #plt.show()
+            j += 1
+            print(j)
+        print(j)
         print('Total epoch {0} loss: {1}'.format(i, sum(total_loss) / len(total_loss)))
