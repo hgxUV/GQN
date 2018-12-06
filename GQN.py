@@ -6,10 +6,10 @@ SIGMA = 1
 BATCH_SIZE = 10
 L = 12
 n_reg_features = 256
-EPOCHS = 10
+EPOCHS = 100
 
 
-#TODO ask someone qualified about this global thingies
+#TODO ask someone qualified about these global thingies
 gen_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 519], output_channels=256, kernel_shape=[5, 5], name='gen_cell')  # TODO: output channels, skip connection?
 inf_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 775], output_channels=256, kernel_shape=[5, 5], name='inf_cell')  # TODO: output channels, skip connection?
 training = False
@@ -22,8 +22,9 @@ def conv_block(prev, size, k: tuple, s: tuple):
 
 
 # x shape: (1, 64, 64, 3), v shape: (1, 7)
-def representation_pipeline_tower(x, v):
-    v = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v, 1), 1), (x.shape[0], 16, 16, 7))
+def representation_pipeline_tower(x, v=None, representation=True):
+    if(representation):
+        v = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v, 1), 1), (x.shape[0], 16, 16, 7))
 
     x = conv_block(x, 256, (2, 2), (2, 2))
 
@@ -33,7 +34,8 @@ def representation_pipeline_tower(x, v):
     x = conv_block(x, 256, (2, 2), (2, 2))
 
     # add v
-    x = tf.concat([x, v], 3)
+    if(representation):
+        x = tf.concat([x, v], 3)
 
     # second residual
     y = conv_block(x, 128, (3, 3), (1, 1))
@@ -82,7 +84,7 @@ def recon_loss(x_true, x_pred):
     rec_loss = tf.losses.mean_squared_error(x_true, x_pred)
     return rec_loss
 
-def regularization_loss(prior, posterior):
+def distribution_loss(prior, posterior):
     prior = prior.concat()
     posterior = posterior.concat()
     distritution = lambda x : tf.distributions.Normal(loc=x[:, :, :, 0:n_reg_features],
@@ -90,13 +92,11 @@ def regularization_loss(prior, posterior):
     prior = distritution(prior)
     posterior = distritution(posterior)
     reg_loss = tf.distributions.kl_divergence(posterior, prior)
-    #with tf.train.SingularMonitoredSession() as sess:
-    #    a = sess.run(reg_loss)
     reg_loss = tf.reduce_mean(reg_loss)
     return reg_loss
 
 def calculate_loss(priors, posteriors, x_pred, x_q):
-    return tf.add(recon_loss(x_q, x_pred), regularization_loss(priors, posteriors))
+    return tf.add(recon_loss(x_q, x_pred), distribution_loss(priors, posteriors))
 
 def observation_sample(u_L):
     means = conv_block(u_L, 3, (1, 1), (1, 1))
@@ -147,24 +147,24 @@ def cond(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
     return dec
 
 
-def architecture(x, v, v_q, x_q, training_local):
+def generative_query_network(x, v, v_q, x_q, training_local):
+    #with tf.variable_scope('gqn', reuse=tf.AUTO_REUSE):
+
     global training
     training = training_local
     x_gt = x_q
-    state_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32') # c + h
-    u = tf.zeros([x.shape[0], 64, 64, 256])
-
-    r = create_representation(x, v)
 
     state_i = inf_cell.zero_state(BATCH_SIZE, dtype='float32') # c + h
+    state_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32') # c + h
 
+    u = tf.zeros([x.shape[0], 64, 64, 256])
+    r = create_representation(x, v)
     i = 0
+    x_q = representation_pipeline_tower(x_q, representation=False)
+    v_q = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v_q, 1), 1), (x.shape[0], 16, 16, 7))
+
     priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])#,  clear_after_read=False)
     posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])#,  clear_after_read=False)
-
-    v_q = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v_q, 1), 1), (x.shape[0], 16, 16, 7))
-    #TODO make x_q 16x16 somehow, mby tower representation is a good option
-    x_q = tf.zeros([x.shape[0], 16, 16, 256])
 
     variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, i)
 
@@ -190,15 +190,18 @@ x_q = data.target
 v_q = data.query.query_camera
 
 
-image, loss = architecture(x, v, v_q, x_q, training_local=True)
-train_op = optimizer.minimize(loss)
+train_output, train_loss = generative_query_network(x, v, v_q, x_q, training_local=True)
+train_op = optimizer.minimize(train_loss)
 
 with tf.train.SingularMonitoredSession() as sess:
     for i in range(EPOCHS):
-        for _ in range(4):
-            x_pred, loss_value = sess.run([image, loss])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+        total_loss = []
+        for j in range(0, 20, BATCH_SIZE):
+            x_pred, x_gt, loss_value = sess.run([train_output, x_q, train_loss])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+            total_loss.append(loss_value)
             print(loss_value)
+            plt.imshow(x_gt[0, ...])
+            plt.show()
             plt.imshow(x_pred[0, ...])
             plt.show()
-
-a = 1
+        print('Total epoch {0} loss: {1}'.format(i, sum(total_loss) / len(total_loss)))
