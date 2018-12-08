@@ -1,6 +1,8 @@
 import tensorflow as tf
 from data_reader import DataReader
 import matplotlib.pyplot as plt
+import datetime
+import os
 
 SIGMA = 1
 BATCH_SIZE = 20
@@ -54,18 +56,15 @@ def create_representation(frames, cameras):
     #assert len(frames.shape) == 4
     #assert len(cameras.shape) == 2
 
-    iterations = frames.shape[1]
-    r = [None] * iterations
+    frames = tf.reshape(frames, (-1, 64, 64, 3))
+    cameras = tf.reshape(cameras, (-1, 7))
 
-    for i in range(iterations):
-        r[i] = representation_pipeline_tower(frames[:, i, :, :, :], cameras[:, i, :])
+    r = representation_pipeline_tower(frames, cameras)
 
-    ret = tf.zeros(r[0].shape)
+    r = tf.reshape(r, (BATCH_SIZE, 5, 16, 16, 256))
+    r = tf.math.reduce_sum(r, axis=1)
 
-    for rr in r:
-        ret = tf.math.add(ret, rr)
-
-    return ret
+    return r
 
 
 def sample_gaussian(mu, sigma=1.):
@@ -84,6 +83,7 @@ def prior_posterior(h_i):
 
 def recon_loss(x_true, x_pred):
     rec_loss = tf.losses.mean_squared_error(x_true, x_pred)
+    tf.summary.scalar('reconstruction_loss', rec_loss)
     return rec_loss
 
 def distribution_loss(prior, posterior):
@@ -93,17 +93,15 @@ def distribution_loss(prior, posterior):
                                                       scale=x[:, :, :, n_reg_features:])
     prior = distritution(prior)
     posterior = distritution(posterior)
-    reg_loss = tf.distributions.kl_divergence(posterior, prior)
-    reg_loss = tf.reduce_mean(reg_loss)
-    return reg_loss
+    dist_loss = tf.distributions.kl_divergence(posterior, prior)
+    dist_loss = tf.reduce_mean(dist_loss)
+    tf.summary.scalar('distribution_loss', dist_loss)
+    return dist_loss
 
 def calculate_loss(priors, posteriors, x_pred, x_q):
-    return tf.add(recon_loss(x_q, x_pred), distribution_loss(priors, posteriors))
-
-def observation_sample(u_L):
-    means = conv_block(u_L, 3, (1, 1), (1, 1))
-    x = tf.map_fn(lambda mean : sample_gaussian(mean), means, dtype=tf.float32)
-    return x
+    loss = tf.add(recon_loss(x_q, x_pred), distribution_loss(priors, posteriors))
+    tf.summary.scalar('loss', loss)
+    return loss
 
 def image_reconstruction(u):
     x = conv_block(u, 3, (1, 1), (1, 1))
@@ -195,13 +193,22 @@ v_q = data.query.query_camera
 train_output, train_loss = generative_query_network(x, v, v_q, x_q, training_local=True)
 train_op = optimizer.minimize(train_loss)
 
+merged_summaries = tf.summary.merge_all()
+now = datetime.datetime.now()
+current_data = now.strftime("%Y-%m-%d-%H-%M")
+path = os.path.join('tensorboard', current_data)
+os.makedirs(os.path.join(path, 'test'))
+train_writer = tf.summary.FileWriter(os.path.join('tensorboard', current_data, 'test'))
+
 
 with tf.train.SingularMonitoredSession() as sess:
+    train_writer.add_graph(sess.graph)
     for i in range(EPOCHS):
         total_loss = []
         j = 0
         for j in range(int((TF_RECORDS * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
-            x_pred, x_gt, loss_value = sess.run([train_output, x_q, train_loss])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+            x_pred, x_gt, loss_value, summary = sess.run([train_output, x_q, train_loss, merged_summaries])  # , feed_dict={x: x, v: v, v_q: v_q, x_q: x_q})
+            train_writer.add_summary(summary, j)
             #x_gt = sess.run(x_q)
             total_loss.append(loss_value)
             print(loss_value)
