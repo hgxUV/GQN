@@ -15,7 +15,7 @@ TF_RECORDS = 20
 
 #TODO ask someone qualified about these global thingies
 gen_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 519], output_channels=256, kernel_shape=[5, 5], name='gen_cell')  # TODO: output channels, skip connection?
-inf_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 775], output_channels=256, kernel_shape=[5, 5], name='inf_cell')  # TODO: output channels, skip connection?
+inf_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 552], output_channels=256, kernel_shape=[5, 5], name='inf_cell')  # TODO: output channels, skip connection?
 training = False
 
 
@@ -116,7 +116,7 @@ def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
     #inference
     if(training):
         concat_i = tf.concat([x_q,
-                              tf.broadcast_to(v_q, (v_q.shape[0], 16, 16, v_q.shape[-1])),
+                              v_q,
                               r,
                               state_g.h],
                              3)
@@ -160,7 +160,8 @@ def generative_query_network(x, v, v_q, x_q, training_local):
     u = tf.zeros([x.shape[0], 64, 64, 256])
     r = create_representation(x, v)
     i = 0
-    x_q = representation_pipeline_tower(x_q, representation=False)
+    #x_q = representation_pipeline_tower(x_q, representation=False)
+    x_q = tf.image.resize_images(x_q, (16, 16))
     v_q = tf.broadcast_to(tf.expand_dims(tf.expand_dims(v_q, 1), 1), (x.shape[0], 16, 16, 7))
 
     priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])#,  clear_after_read=False)
