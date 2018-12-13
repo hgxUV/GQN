@@ -9,7 +9,8 @@ L = 12
 n_reg_features = 256
 EPOCHS = 100
 RECORDS_IN_TF_RECORD = 5000
-TF_RECORDS = 20
+TF_RECORDS_TRAIN = 20
+TF_RECORDS_TEST = 20
 
 
 def conv_block(prev, size, k: tuple, s: tuple, name=None):
@@ -48,13 +49,14 @@ def representation_pipeline_tower(x, v):
 
 # frames shape: (5, 64, 64, 3), v shape: (5, 7)
 def create_representation(frames, cameras):
-    frames = tf.reshape(frames, (-1, 64, 64, 3), name='frames_reshape')
-    cameras = tf.reshape(cameras, (-1, 7), name='cameras_reshape')
+    with tf.variable_scope("create_representation"):
+        frames = tf.reshape(frames, (-1, 64, 64, 3), name='frames_reshape')
+        cameras = tf.reshape(cameras, (-1, 7), name='cameras_reshape')
 
-    r = representation_pipeline_tower(frames, cameras)
+        r = representation_pipeline_tower(frames, cameras)
 
-    r = tf.reshape(r, (BATCH_SIZE, 5, 16, 16, 256), name='r_rereshape')
-    r = tf.math.reduce_sum(r, axis=1, name='reducing_sum_images')
+        r = tf.reshape(r, (BATCH_SIZE, 5, 16, 16, 256), name='r_rereshape')
+        r = tf.math.reduce_sum(r, axis=1, name='reducing_sum_images')
 
     return r
 
@@ -148,10 +150,10 @@ def generative_query_network(x, v, v_q, x_q, training):
         with tf.variable_scope("init"):
             gen_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 519], output_channels=256,
                                                      kernel_shape=[5, 5],
-                                                     name='gen_cell')  # TODO: output channels, skip connection?
+                                                     name='gen_cell')
             inf_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 552], output_channels=256,
                                                      kernel_shape=[5, 5],
-                                                     name='inf_cell')  # TODO: output channels, skip connection?
+                                                     name='inf_cell')
 
             x_gt = x_q
 
@@ -166,8 +168,8 @@ def generative_query_network(x, v, v_q, x_q, training):
             exp_2 = tf.expand_dims(exp_1, 1, name='exp_2')
             v_q = tf.broadcast_to(exp_2, (x.shape[0], 16, 16, 7), name='query_broadcast')
 
-            priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2], name='priors_TA')
-            posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2], name='posteriors_TA')
+            priors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])#, name='priors_TA')
+            posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16, n_reg_features*2])#, name='posteriors_TA')
 
         r = create_representation(x, v)
 
@@ -186,19 +188,27 @@ tf.reset_default_graph()
 
 root_path = 'data'
 with tf.variable_scope('data_reader'):
-    data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
+    train_data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
+    test_data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path, mode='test')
 
 with tf.variable_scope('adam'):
     optimizer = tf.train.AdamOptimizer()
 with tf.variable_scope('data_init'):
-    data = data_reader.read(batch_size=BATCH_SIZE)
-    x = data.query.context.frames
-    v = data.query.context.cameras
-    x_q = data.target
-    v_q = data.query.query_camera
+    data_train = train_data_reader.read(batch_size=BATCH_SIZE)
+    x = data_train.query.context.frames
+    v = data_train.query.context.cameras
+    x_q = data_train.target
+    v_q = data_train.query.query_camera
+
+    data_test = test_data_reader.read(batch_size=BATCH_SIZE)
+    x_t = data_test.query.context.frames
+    v_t = data_test.query.context.cameras
+    x_q_t = data_test.target
+    v_q_t = data_test.query.query_camera
 
 
 train_output, train_loss = generative_query_network(x, v, v_q, x_q, training=True)
+test_output, test_loss = generative_query_network(x_t, v_t, x_q_t, v_q_t, training=False)
 with tf.variable_scope('optimizer'):
     train_op = optimizer.minimize(train_loss)
 
@@ -210,18 +220,23 @@ os.makedirs(os.path.join(path, 'test'))
 train_writer = tf.summary.FileWriter(os.path.join('tensorboard', current_data, 'test'))
 
 
-with tf.train.SingularMonitoredSession() as sess:
+with tf.Session() as sess:
     train_writer.add_graph(sess.graph)
     for i in range(EPOCHS):
-        break
-        total_loss = []
-        j = 0
-        for j in range(int((TF_RECORDS * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
-            x_pred, x_gt, loss_value, summary = sess.run([train_output, x_q, train_loss, merged_summaries])
+        total_loss_train = []
+        total_loss_test = []
+        for j in range(int((TF_RECORDS_TRAIN * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
+            _, loss_value, summary = sess.run([train_op, train_loss, merged_summaries])
             train_writer.add_summary(summary, j)
-            total_loss.append(loss_value)
-            print(loss_value)
+            total_loss_train.append(loss_value)
+            if(i%1 == 0):
+                print(loss_value)
+                print(j)
             j += 1
-            print(j)
-        print(j)
-        print('Total epoch {0} loss: {1}'.format(i, sum(total_loss) / len(total_loss)))
+        for j in range(int((TF_RECORDS_TEST * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
+            _, loss_value, summary = sess.run([train_op, test_loss, merged_summaries])
+            train_writer.add_summary(summary, j)
+            total_loss_test.append(loss_value)
+            j += 1
+        print('Total epoch {0} loss: {1}, validation: {2}'.format(i, sum(total_loss_train) / len(total_loss_train),
+                                                                  sum(total_loss_test) / len(total_loss_test)))
