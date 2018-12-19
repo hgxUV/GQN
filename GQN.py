@@ -155,10 +155,14 @@ def generative_query_network(data, training):
             posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16,
                                                                                   n_reg_features * 2])  # , name='posteriors_TA')
 
+        x = tf.Print(x, [x], message='before net')
         r = create_representation(x, v)
+        r = tf.Print(r, [r], message='representation done')
         variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, i)
         variables = tf.while_loop(cond, body, variables)
         state_g, u, r, v_q, x_q, state_i, priors, posteriors, i = variables
+        u = tf.Print(u, [u], message='loop done')
         x_pred = image_reconstruction(u)
+        x_pred = tf.Print(x_pred, [x_pred], message='image reconstruction done')
 
         return x_pred, priors, posteriors

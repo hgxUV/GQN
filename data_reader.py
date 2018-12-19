@@ -129,7 +129,7 @@ class DataReader(object):
                  # Optionally reshape frames
                  custom_frame_size=None,
                  # Queue params
-                 num_threads=4,
+                 num_threads=8,
                  capacity=256,
                  min_after_dequeue=128,
                  seed=None):

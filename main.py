@@ -22,7 +22,7 @@ def loss(x, priors, posteriors, y):
     model_loss = tf.losses.mean_squared_error(y, x)
     dist_loss = distribution_loss(priors, posteriors)
     regularization_loss = tf.losses.get_regularization_loss()
-    total_loss = model_loss + dist_loss + regularization_loss
+    total_loss = model_loss + dist_loss  # + regularization_loss
     return total_loss, model_loss, dist_loss, regularization_loss
 
 
@@ -38,8 +38,8 @@ def prepare_train_op(loss, init_eta, decay_step, train_beta):
     optimizer = tf.train.AdamOptimizer(eta)
 
     # todo think about gradient clipping
-    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-        train_op = optimizer.minimize(loss, global_step)
+    # with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+    train_op = optimizer.minimize(loss, global_step)
 
     return train_op
 
@@ -85,7 +85,7 @@ def main(args):
 
     train_iteration, val_iteration = 0, 0
 
-    with tf.Session() as sess:
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
         sess.run(init_global)
 
         if args.restore_path is not None:
@@ -96,6 +96,7 @@ def main(args):
             with tqdm(ncols=80, total=TRAIN_SIZE,
                       bar_format='Validation epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
                 for i in range(TRAIN_SIZE):
+                    xxxx = sess.run(t_data[0])
                     if i % args.train_summary_interval == 0:
                         _, tmp_loss = sess.run([train_op, t_loss[0]])
                     else:
@@ -112,6 +113,7 @@ def main(args):
                 for i in range(VAL_SIZE):
                     if i % args.val_summary_interval == 0:
                         tmp_loss = sess.run([v_loss[0]])
+                        # TODO do something
                     else:
                         tmp_loss, tmp_summary = sess.run([v_loss[0], v_summary])
                         val_writer.add_summary(tmp_summary, val_iteration)
