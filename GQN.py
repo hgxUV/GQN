@@ -1,18 +1,9 @@
-import datetime
-import os
-
 import tensorflow as tf
-
-from data_reader import DataReader
+import tensorflow.contrib as tfc
 
 SIGMA = 1
-BATCH_SIZE = 20
 L = 12
 n_reg_features = 256
-EPOCHS = 100
-RECORDS_IN_TF_RECORD = 5000
-TF_RECORDS_TRAIN = 20
-TF_RECORDS_TEST = 20
 
 
 def conv_block(prev, size, k: tuple, s: tuple, name=None):
@@ -56,7 +47,7 @@ def create_representation(frames, cameras):
 
         r = representation_pipeline_tower(frames, cameras)
 
-        r = tf.reshape(r, (BATCH_SIZE, 5, 16, 16, 256), name='r_rereshape')
+        r = tf.reshape(r, (-1, 5, 16, 16, 256), name='r_rereshape')
         r = tf.math.reduce_sum(r, axis=1, name='reducing_sum_images')
 
     return r
@@ -99,7 +90,7 @@ def image_reconstruction(u):
 
 
 def generative_query_network(data, training):
-    x, v, v_q, x_q = data
+    (x, v), (x_q, v_q) = data
 
     def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
 
@@ -136,10 +127,10 @@ def generative_query_network(data, training):
         return state_g, u, r, v_q, x_q, state_i, priors, posteriors, i
 
     def cond(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
-        dec = tf.less(i, L)
-        return dec
+        return tf.less(i, L)
 
-    with tf.variable_scope('gqn', reuse=tf.AUTO_REUSE):
+    with tf.variable_scope('gqn', reuse=tf.AUTO_REUSE,
+                           regularizer=tfc.layers.l2_regularizer(1e-4)):
         with tf.variable_scope("init"):
             gen_cell = tf.contrib.rnn.Conv2DLSTMCell(input_shape=[16, 16, 519], output_channels=256,
                                                      kernel_shape=[5, 5],
@@ -148,8 +139,8 @@ def generative_query_network(data, training):
                                                      kernel_shape=[5, 5],
                                                      name='inf_cell')
 
-            state_i = inf_cell.zero_state(BATCH_SIZE, dtype='float32')  # c + h
-            state_g = gen_cell.zero_state(BATCH_SIZE, dtype='float32')  # c + h
+            state_i = inf_cell.zero_state(x.shape[0], dtype='float32')  # c + h
+            state_g = gen_cell.zero_state(x.shape[0], dtype='float32')  # c + h
 
             u = tf.zeros([x.shape[0], 64, 64, 256], name='u')
             i = 0
@@ -165,69 +156,9 @@ def generative_query_network(data, training):
                                                                                   n_reg_features * 2])  # , name='posteriors_TA')
 
         r = create_representation(x, v)
-
         variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, i)
-
-        variables = tf.while_loop(cond, body, variables, parallel_iterations=1)
-
+        variables = tf.while_loop(cond, body, variables)
         state_g, u, r, v_q, x_q, state_i, priors, posteriors, i = variables
-
         x_pred = image_reconstruction(u)
 
         return x_pred, priors, posteriors
-
-
-tf.reset_default_graph()
-
-root_path = 'data'
-with tf.variable_scope('data_reader'):
-    train_data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path)
-    test_data_reader = DataReader(dataset='rooms_ring_camera', context_size=5, root=root_path, mode='test')
-
-with tf.variable_scope('adam'):
-    optimizer = tf.train.AdamOptimizer()
-with tf.variable_scope('data_init'):
-    data_train = train_data_reader.read(batch_size=BATCH_SIZE)
-    x = data_train.query.context.frames
-    v = data_train.query.context.cameras
-    x_q = data_train.target
-    v_q = data_train.query.query_camera
-
-    data_test = test_data_reader.read(batch_size=BATCH_SIZE)
-    x_t = data_test.query.context.frames
-    v_t = data_test.query.context.cameras
-    x_q_t = data_test.target
-    v_q_t = data_test.query.query_camera
-
-train_output, train_loss = generative_query_network(x, v, v_q, x_q, training=True)
-test_output, test_loss = generative_query_network(x_t, v_t, x_q_t, v_q_t, training=False)
-with tf.variable_scope('optimizer'):
-    train_op = optimizer.minimize(train_loss)
-
-merged_summaries = tf.summary.merge_all()
-now = datetime.datetime.now()
-current_data = now.strftime("%Y-%m-%d-%H-%M")
-path = os.path.join('tensorboard', current_data)
-os.makedirs(os.path.join(path, 'test'))
-train_writer = tf.summary.FileWriter(os.path.join('tensorboard', current_data, 'test'))
-
-with tf.Session() as sess:
-    train_writer.add_graph(sess.graph)
-    for i in range(EPOCHS):
-        total_loss_train = []
-        total_loss_test = []
-        for j in range(int((TF_RECORDS_TRAIN * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
-            _, loss_value, summary = sess.run([train_op, train_loss, merged_summaries])
-            train_writer.add_summary(summary, j)
-            total_loss_train.append(loss_value)
-            if (i % 1 == 0):
-                print(loss_value)
-                print(j)
-            j += 1
-        for j in range(int((TF_RECORDS_TEST * RECORDS_IN_TF_RECORD) / BATCH_SIZE)):
-            _, loss_value, summary = sess.run([train_op, test_loss, merged_summaries])
-            train_writer.add_summary(summary, j)
-            total_loss_test.append(loss_value)
-            j += 1
-        print('Total epoch {0} loss: {1}, validation: {2}'.format(i, sum(total_loss_train) / len(total_loss_train),
-                                                                  sum(total_loss_test) / len(total_loss_test)))

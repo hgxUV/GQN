@@ -37,3 +37,13 @@ def restore(path):
         print('Model loaded from ' + path)
     except Exception:
         print("Can't load graph - probably doesn't exists")
+
+
+def prepare_writer(logdir, out_name, sub_folder):
+    if logdir:
+        log_path = os.path.join(logdir, out_name)
+        if not os.path.exists(log_path):
+            os.makedirs(log_path)
+        return tf.summary.FileWriter(os.path.join(log_path, sub_folder), tf.get_default_graph())
+
+    return None
