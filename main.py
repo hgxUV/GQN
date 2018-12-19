@@ -22,7 +22,7 @@ def loss(x, priors, posteriors, y):
     model_loss = tf.losses.mean_squared_error(y, x)
     dist_loss = distribution_loss(priors, posteriors)
     regularization_loss = tf.losses.get_regularization_loss()
-    total_loss = model_loss + dist_loss  # + regularization_loss
+    total_loss = model_loss + dist_loss  + regularization_loss
     return total_loss, model_loss, dist_loss, regularization_loss
 
 
@@ -38,8 +38,8 @@ def prepare_train_op(loss, init_eta, decay_step, train_beta):
     optimizer = tf.train.AdamOptimizer(eta)
 
     # todo think about gradient clipping
-    # with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-    train_op = optimizer.minimize(loss, global_step)
+    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+        train_op = optimizer.minimize(loss, global_step)
 
     return train_op
 
