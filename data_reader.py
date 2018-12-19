@@ -278,9 +278,6 @@ def get_dataset(path, name, context_size, batch_size, training):
     data_reader = DataReader(name, context_size, path, mode)
     data = data_reader.read(batch_size)
 
-    with tf.Session() as sess:
-        xxxx = sess.run(data[1])
-
     x = data.query.context.frames
     v = data.query.context.cameras
     x_q = data.target
