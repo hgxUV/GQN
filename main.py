@@ -64,6 +64,9 @@ def summaries(inputs, outputs, losses, training):
 
 def main(args):
     t_data = get_dataset(args.dataset_path, args.dataset_name, args.context_size, args.train_batch_size, True)
+    with tf.Session() as sess:
+        xxxx = sess.run(t_data[1])
+
     v_data = get_dataset(args.dataset_path, args.dataset_name, args.context_size, args.val_batch_size, False)
 
     t_output = generative_query_network(t_data, True)
@@ -96,7 +99,7 @@ def main(args):
             with tqdm(ncols=80, total=TRAIN_SIZE,
                       bar_format='Validation epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
                 for i in range(TRAIN_SIZE):
-                    xxxx = sess.run(t_data[0])
+                    xxxx = sess.run(t_data[1])
                     if i % args.train_summary_interval == 0:
                         _, tmp_loss = sess.run([train_op, t_loss[0]])
                     else:
