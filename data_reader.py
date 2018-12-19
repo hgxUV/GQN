@@ -275,12 +275,15 @@ class DataReader(object):
 def get_dataset(path, name, context_size, batch_size, training):
     mode = 'train' if training else 'test'
 
-    train_data_reader = DataReader(name, context_size, path, mode)
-    data_train = train_data_reader.read(batch_size)
+    data_reader = DataReader(name, context_size, path, mode)
+    data = data_reader.read(batch_size)
 
-    x = data_train.query.context.frames
-    v = data_train.query.context.cameras
-    x_q = data_train.target
-    v_q = data_train.query.query_camera
+    with tf.Session() as sess:
+        xxxx = sess.run(data[1])
+
+    x = data.query.context.frames
+    v = data.query.context.cameras
+    x_q = data.target
+    v_q = data.query.query_camera
 
     return (x, v), (x_q, v_q)
