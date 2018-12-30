@@ -61,8 +61,8 @@ _DATASETS = dict(
         basepath='rooms_ring_camera',
         # train_size=2160,
         # test_size=240,
-        train_size=2,
-        test_size=0,
+        train_size=1,
+        test_size=1,
         frame_size=64,
         sequence_size=10),
 

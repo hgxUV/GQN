@@ -12,7 +12,7 @@ tf.set_random_seed(42)
 np.random.seed(42)
 
 RECORDS_IN_TF_RECORD = 5000
-TF_RECORDS_TRAIN = 3
+TF_RECORDS_TRAIN = 1
 TF_RECORDS_VAL = 1
 TRAIN_SIZE = int(TF_RECORDS_TRAIN * RECORDS_IN_TF_RECORD)
 VAL_SIZE = int(TF_RECORDS_VAL * RECORDS_IN_TF_RECORD)
@@ -84,42 +84,37 @@ def main(args):
     val_writer = prepare_writer(args.logs_dir, args.out_name, 'val')
 
     train_iteration, val_iteration = 0, 0
-    with tf.train.SingularMonitoredSession() as sess:
-        sess.run(init_global)
+        
+    saver_hook = tf.train.CheckpointSaverHook(
+      checkpoint_dir=args.save_path,
+      save_secs=60,
+      save_steps=None,
+      saver=tf.train.Saver(),
+      checkpoint_basename='model.ckpt',
+      scaffold=None)
+      
+    saver = tf.train.Saver()
 
-        if args.restore_path is not None:
-            restore(args.restore_path)
+    with tf.train.MonitoredTrainingSession(hooks=[saver_hook], checkpoint_dir=args.save_path) as sess:
+        sess.run(init_global)
+        
+	if args.restore_path is not None:
+        	ckpt = tf.train.get_checkpoint_state(args.restore_path)
+        		if ckpt and ckpt.model_checkpoint_path:
+            			saver.restore(sess, ckpt.model_checkpoint_path)
 
         for epoch in range(args.num_epochs):
             sess.run(init_local)
-            with tqdm(ncols=80, total=TRAIN_SIZE,
-                      bar_format='Training epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
-                for i in range(TRAIN_SIZE):
-                    if i % args.train_summary_interval == 0:
-                        _, tmp_loss = sess.run([train_op, t_loss[0]])
-                    else:
-                        _, tmp_loss, tmp_summary = sess.run([train_op, t_loss[0], t_summary])
-                        train_writer.add_summary(tmp_summary, train_iteration)
-                        train_writer.flush()
-                    train_iteration += 1
-                    pbar.update(1)
 
-            sess.run(init_local)
-            # TODO calc some metrics? accuracy?
-            with tqdm(ncols=80, total=VAL_SIZE,
-                      bar_format='Validation epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
-                for i in range(VAL_SIZE):
-                    if i % args.val_summary_interval == 0:
-                        tmp_loss = sess.run([v_loss[0]])
-                        # TODO do something
-                    else:
-                        tmp_loss, tmp_summary = sess.run([v_loss[0], v_summary])
-                        val_writer.add_summary(tmp_summary, val_iteration)
-                        val_writer.flush()
-                    val_iteration += 1
-                    pbar.update(1)
-
-            save(args.save_path)
+            for i in range(0, TRAIN_SIZE, args.train_batch_size):
+                if train_iteration % args.train_summary_interval == 0:
+                    _, tmp_loss = sess.run([train_op, t_loss[0]])
+                else:
+                    _, tmp_loss, tmp_summary = sess.run([train_op, t_loss[0], t_summary])
+                    print(tmp_loss)
+                    train_writer.add_summary(tmp_summary, train_iteration)
+                    train_writer.flush()
+                train_iteration += 1
 
 
 if __name__ == '__main__':
@@ -145,6 +140,7 @@ if __name__ == '__main__':
     parser.add_argument('--val_summary_interval', type=int, default=50)
 
     # restore arguments
+    parser.add_argument('--save-path', type=str, required=True)
     parser.add_argument('--restore-path', type=str)
 
     args, _ = parser.parse_known_args()

@@ -3,8 +3,8 @@ import os
 import tensorflow as tf
 
 
-def save(path):
-    sess = tf.get_default_session()
+def save(path, saver, sess):
+    #sess = tf.get_default_session()
     if sess is None:
         raise Exception('Run this method inside default session')
 
@@ -14,13 +14,13 @@ def save(path):
     if not os.path.exists(path):
         os.makedirs(path)
 
-    saver = tf.train.Saver()
-    with sess.as_default():
-        saver.save(sess, path)
+    #saver = tf.train.Saver()
+    #with sess.as_default():
+    saver.save(sess, path)
 
 
-def restore(path):
-    sess = tf.get_default_session()
+def restore(path, saver, sess):
+    #sess = tf.get_default_session()
     if sess is None:
         raise Exception('Run this method inside default session')
 
@@ -31,7 +31,7 @@ def restore(path):
             print('No such path!')
             return
 
-    saver = tf.train.Saver()
+    #saver = tf.train.Saver()
     try:
         saver.restore(sess, path)
         print('Model loaded from ' + path)
