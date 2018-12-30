@@ -97,11 +97,11 @@ def main(args):
 
     with tf.train.MonitoredTrainingSession(hooks=[saver_hook], checkpoint_dir=args.save_path) as sess:
         sess.run(init_global)
-        
-	if args.restore_path is not None:
-        	ckpt = tf.train.get_checkpoint_state(args.restore_path)
-        		if ckpt and ckpt.model_checkpoint_path:
-            			saver.restore(sess, ckpt.model_checkpoint_path)
+
+        if args.restore_path is not None:
+            ckpt = tf.train.get_checkpoint_state(args.restore_path)
+            if ckpt and ckpt.model_checkpoint_path:
+                saver.restore(sess, ckpt.model_checkpoint_path)
 
         for epoch in range(args.num_epochs):
             sess.run(init_local)
