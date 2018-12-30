@@ -11,7 +11,7 @@ from utils import save, restore, prepare_writer
 tf.set_random_seed(42)
 np.random.seed(42)
 
-RECORDS_IN_TF_RECORD = 5000
+RECORDS_IN_TF_RECORD = 100
 TF_RECORDS_TRAIN = 1
 TF_RECORDS_VAL = 1
 TRAIN_SIZE = int(TF_RECORDS_TRAIN * RECORDS_IN_TF_RECORD)
@@ -101,20 +101,39 @@ def main(args):
         if args.restore_path is not None:
             ckpt = tf.train.get_checkpoint_state(args.restore_path)
             if ckpt and ckpt.model_checkpoint_path:
+                print('restoring', ckpt.model_checkpoint_path)
                 saver.restore(sess, ckpt.model_checkpoint_path)
 
         for epoch in range(args.num_epochs):
             sess.run(init_local)
+            
+            with tqdm(ncols=80, total=TRAIN_SIZE,
+                      bar_format='Training epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
 
-            for i in range(0, TRAIN_SIZE, args.train_batch_size):
-                if train_iteration % args.train_summary_interval == 0:
-                    _, tmp_loss = sess.run([train_op, t_loss[0]])
-                else:
-                    _, tmp_loss, tmp_summary = sess.run([train_op, t_loss[0], t_summary])
-                    print(tmp_loss)
-                    train_writer.add_summary(tmp_summary, train_iteration)
-                    train_writer.flush()
-                train_iteration += 1
+                for i in range(0, TRAIN_SIZE, args.train_batch_size):
+                    if train_iteration % args.train_summary_interval == 0:
+                        _, tmp_loss = sess.run([train_op, t_loss[0]])
+                    else:
+                        _, tmp_loss, tmp_summary = sess.run([train_op, t_loss[0], t_summary])
+                        train_writer.add_summary(tmp_summary, train_iteration)
+                        train_writer.flush()
+                    train_iteration += 1
+                    pbar.update(args.train_batch_size)
+                
+            sess.run(init_local)
+            # TODO calc some metrics? accuracy?
+            with tqdm(ncols=80, total=VAL_SIZE,
+                      bar_format='Validation epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
+                for i in range(0, VAL_SIZE, args.val_batch_size):
+                    if i % args.val_summary_interval == 0:
+                        tmp_loss = sess.run([v_loss[0]])
+                        # TODO do something
+                    else:
+                        tmp_loss, tmp_summary = sess.run([v_loss[0], v_summary])
+                        val_writer.add_summary(tmp_summary, val_iteration)
+                        val_writer.flush()
+                    val_iteration += 1
+                    pbar.update(args.val_batch_size)
 
 
 if __name__ == '__main__':
@@ -144,4 +163,7 @@ if __name__ == '__main__':
     parser.add_argument('--restore-path', type=str)
 
     args, _ = parser.parse_known_args()
+    
+    assert args.save_path != args.restore_path, 'save path and restore path must be different'
+    
     main(args)
