@@ -1,7 +1,7 @@
 import tensorflow as tf
 import tensorflow.contrib as tfc
 
-SIGMA = 1
+SIGMA = 0.05
 L = 12
 n_reg_features = 256
 
@@ -92,7 +92,7 @@ def image_reconstruction(u):
 def generative_query_network(data, training):
     (x, v), (x_q, v_q) = data
 
-    def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
+    def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i):
 
         # inference
         with tf.variable_scope("inference"):
@@ -112,8 +112,8 @@ def generative_query_network(data, training):
             prior_latent, prior_params = prior_posterior(state_g.h, name='prior')
             priors = priors.write(i, prior_params)
 
-            if (training):
-                prior_latent = posterior_latent
+            #if (training):
+            #    prior_latent = posterior_latent
 
             concat_g = tf.concat([v_q,
                                   r,
@@ -121,12 +121,14 @@ def generative_query_network(data, training):
                                  3, name='concat_generation')
             h_g, state_g = gen_cell(concat_g, state_g)
             u = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME', name='h_upsampling'), u, name='u_update')
+            
+        images.write(i, image_reconstruction(u))
 
         i = tf.math.add(i, 1, name='increment')
 
-        return state_g, u, r, v_q, x_q, state_i, priors, posteriors, i
+        return state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i
 
-    def cond(state_g, u, r, v_q, x_q, state_i, priors, posteriors, i):
+    def cond(state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i):
         return tf.less(i, L)
 
     with tf.variable_scope('gqn', reuse=tf.AUTO_REUSE,
@@ -151,14 +153,16 @@ def generative_query_network(data, training):
             v_q = tf.broadcast_to(exp_2, (x.shape[0], 16, 16, 7), name='query_broadcast')
 
             priors = tf.TensorArray(dtype=tf.float32, size=12,
-                                    element_shape=[x.shape[0], 16, 16, n_reg_features * 2])  # , name='priors_TA')
+                                    element_shape=[x.shape[0], 16, 16, n_reg_features * 2], clear_after_read = False)  # , name='priors_TA')
             posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16,
-                                                                                  n_reg_features * 2])  # , name='posteriors_TA')
+                                                                                  n_reg_features * 2], clear_after_read = False)  # , name='posteriors_TA')
+                                                                                  
+            images = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 64, 64, 3], clear_after_read = False)
 
         r = create_representation(x, v)
-        variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, i)
+        variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i)
         variables = tf.while_loop(cond, body, variables)
-        state_g, u, r, v_q, x_q, state_i, priors, posteriors, i = variables
+        state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i = variables
         x_pred = image_reconstruction(u)
 
-        return x_pred, priors, posteriors
+        return x_pred, priors, posteriors, images
