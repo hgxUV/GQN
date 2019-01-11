@@ -1,8 +1,7 @@
 import tensorflow as tf
 import tensorflow.contrib as tfc
 
-SIGMA = 0.05
-L = 12
+L = 8#12
 n_reg_features = 256
 
 
@@ -57,7 +56,7 @@ def prior_posterior(h_i, name):
     gaussianParams = conv_block(h_i, 2 * n_reg_features, (5, 5), (1, 1), name='conv')
     means = gaussianParams[:, :, :, 0:n_reg_features]
     stds = gaussianParams[:, :, :, n_reg_features:]
-    stds = tf.nn.softmax(stds, name='std_normalization')
+    stds = tf.nn.softplus(stds, name='std_normalization')
     gaussianParams = tf.concat([means, stds], -1, name='mean_std_concat')
     distributions = tf.distributions.Normal(loc=means, scale=stds,
                                             name='normal_distribution')
@@ -80,16 +79,16 @@ def distribution_loss(prior, posterior):
         return dist_loss
 
 
-def image_reconstruction(u):
+def image_reconstruction(u, sigma):
     with tf.variable_scope("image_reconstruction"):
         x = conv_block(u, 3, (1, 1), (1, 1), name='image_reconstruction')
-        stds = tf.multiply(tf.ones(x.shape), SIGMA, name='stds')
+        stds = tf.multiply(tf.ones(x.shape), sigma, name='stds')
         dist = tf.distributions.Normal(loc=x, scale=stds, name='normal_distribution')
         x_pred = dist.sample(name='sampling')
         return x_pred
 
 
-def generative_query_network(data, training):
+def generative_query_network(data, sigma, training):
     (x, v), (x_q, v_q) = data
 
     def body(state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i):
@@ -112,8 +111,8 @@ def generative_query_network(data, training):
             prior_latent, prior_params = prior_posterior(state_g.h, name='prior')
             priors = priors.write(i, prior_params)
 
-            #if (training):
-            #    prior_latent = posterior_latent
+            if (training):
+                prior_latent = posterior_latent
 
             concat_g = tf.concat([v_q,
                                   r,
@@ -122,7 +121,7 @@ def generative_query_network(data, training):
             h_g, state_g = gen_cell(concat_g, state_g)
             u = tf.math.add(tf.layers.conv2d_transpose(h_g, 256, 4, 4, 'SAME', name='h_upsampling'), u, name='u_update')
             
-        images.write(i, image_reconstruction(u))
+        images = images.write(i, image_reconstruction(u, sigma))
 
         i = tf.math.add(i, 1, name='increment')
 
@@ -152,17 +151,17 @@ def generative_query_network(data, training):
             exp_2 = tf.expand_dims(exp_1, 1, name='exp_2')
             v_q = tf.broadcast_to(exp_2, (x.shape[0], 16, 16, 7), name='query_broadcast')
 
-            priors = tf.TensorArray(dtype=tf.float32, size=12,
+            priors = tf.TensorArray(dtype=tf.float32, size=L,
                                     element_shape=[x.shape[0], 16, 16, n_reg_features * 2], clear_after_read = False)  # , name='priors_TA')
-            posteriors = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 16, 16,
+            posteriors = tf.TensorArray(dtype=tf.float32, size=L, element_shape=[x.shape[0], 16, 16,
                                                                                   n_reg_features * 2], clear_after_read = False)  # , name='posteriors_TA')
                                                                                   
-            images = tf.TensorArray(dtype=tf.float32, size=12, element_shape=[x.shape[0], 64, 64, 3], clear_after_read = False)
+            images = tf.TensorArray(dtype=tf.float32, size=L, element_shape=[x.shape[0], 64, 64, 3], clear_after_read = False)
 
         r = create_representation(x, v)
         variables = (state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i)
         variables = tf.while_loop(cond, body, variables)
         state_g, u, r, v_q, x_q, state_i, priors, posteriors, images, i = variables
-        x_pred = image_reconstruction(u)
+        x_pred = image_reconstruction(u, sigma)
 
         return x_pred, priors, posteriors, images

@@ -19,9 +19,9 @@ VAL_SIZE = int(TF_RECORDS_VAL * RECORDS_IN_TF_RECORD)
 
 
 def loss(x, priors, posteriors, images, y):
-    model_loss = tf.scalar_mul(1000, tf.losses.mean_squared_error(y, x))
-    dist_loss = distribution_loss(priors, posteriors)
-    regularization_loss = tf.scalar_mul(1000, tf.losses.get_regularization_loss())
+    model_loss = tf.scalar_mul(1, tf.losses.mean_squared_error(y, x))
+    dist_loss = tf.scalar_mul(1, distribution_loss(priors, posteriors))
+    regularization_loss = tf.scalar_mul(1, tf.losses.get_regularization_loss())
     total_loss = model_loss + dist_loss  + regularization_loss
     return total_loss, model_loss, dist_loss, regularization_loss
 
@@ -52,15 +52,15 @@ def summaries(inputs, outputs, losses, training):
     
     priors = priors.concat(name='prior_concat')
     posteriors = posteriors.concat(name='posterior_concat')
-    #images = images.stack(name='images_concat')
-    #images = tf.transpose(images, perm=[1, 0, 2, 3, 4], name='images_reshape')
+    images = images.stack(name='images_concat')
+    images = tf.transpose(images, perm=[1, 0, 2, 3, 4], name='images_reshape')
 
     # todo: think about priors and posteriors visualization
     return tf.summary.merge([
         tf.summary.image(pre + 'x', x[0, :], 5),
         tf.summary.image(pre + 'x_query', x_q, 1),
         tf.summary.image(pre + 'x_pred', x_pred, 1),
-        #tf.summary.image(pre + 'LSTM', images[0, :], 12),
+        tf.summary.image(pre + 'LSTM', images[0, :], 12),
         tf.summary.scalar(pre + 'total_loss', total_loss),
         tf.summary.scalar(pre + 'model_loss', model_loss),
         tf.summary.scalar(pre + 'distribution_loss', dist_loss),
@@ -76,8 +76,15 @@ def main(args):
     t_data = get_dataset(args.dataset_path, args.dataset_name, args.context_size, args.train_batch_size, True)
     v_data = get_dataset(args.dataset_path, args.dataset_name, args.context_size, args.val_batch_size, False)
 
-    t_output = generative_query_network(t_data, True)
-    v_output = generative_query_network(v_data, False)
+    sigma = tf.train.exponential_decay(
+        args.sigma,
+        tf.train.get_or_create_global_step(),
+        TRAIN_SIZE * args.sigma_step / args.train_batch_size,
+        args.sigma_decay
+    )
+
+    t_output = generative_query_network(t_data, sigma, True)
+    v_output = generative_query_network(v_data, sigma, False)
 
     t_loss = loss(*t_output, t_data[1][0])
     v_loss = loss(*v_output, v_data[1][0])
@@ -132,18 +139,19 @@ def main(args):
                 
             sess.run(init_local)
             # TODO calc some metrics? accuracy?
-            with tqdm(ncols=80, total=VAL_SIZE,
-                      bar_format='Validation epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
-                for i in range(0, VAL_SIZE, args.val_batch_size):
-                    if i % args.val_summary_interval != 0:
-                        tmp_loss = sess.run([v_loss[0]])
-                        # TODO do something
-                    else:
-                        tmp_loss, tmp_summary = sess.run([v_loss[0], v_summary])
-                        val_writer.add_summary(tmp_summary, val_iteration)
-                        val_writer.flush()
-                    val_iteration += 1
-                    pbar.update(args.val_batch_size)
+            if(epoch % 10 == 0):
+                with tqdm(ncols=80, total=VAL_SIZE,
+                          bar_format='Validation epoch %d | {l_bar}{bar} | Remaining: {remaining}' % (epoch + 1)) as pbar:
+                    for i in range(0, VAL_SIZE, args.val_batch_size):
+                        if val_iteration % args.val_summary_interval != 0:
+                            tmp_loss = sess.run([v_loss[0]])
+                            # TODO do something
+                        else:
+                            tmp_loss, tmp_summary = sess.run([v_loss[0], v_summary])
+                            val_writer.add_summary(tmp_summary, val_iteration)
+                            val_writer.flush()
+                        val_iteration += 1
+                        pbar.update(args.val_batch_size)
 
 
 if __name__ == '__main__':
@@ -161,6 +169,10 @@ if __name__ == '__main__':
     parser.add_argument('--train-beta', type=float, default=0.99)
     parser.add_argument('--train-batch-size', type=int, default=1)
     parser.add_argument('--val-batch-size', type=int, default=1)
+
+    parser.add_argument('--sigma', type=float, default=0.05)
+    parser.add_argument('--sigma-step', type=int, default=1)
+    parser.add_argument('--sigma-decay', type=float, default=0.99)
 
     # summary arguments
     parser.add_argument('--logs-dir', type=str, default='./logs')
